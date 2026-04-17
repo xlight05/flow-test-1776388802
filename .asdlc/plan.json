@@ -1,0 +1,36 @@
+{
+  "strategy": "Single-Phase",
+  "overview": "The design contains a single independent component with no dependencies, so the entire implementation fits in one phase. The todo-api service encapsulates all required functionality including the new bulk-delete endpoint.",
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Foundation Service",
+      "description": "Single self-contained Go service implementing the Todo API with bulk-delete support.",
+      "components": [
+        {
+          "name": "todo-api",
+          "componentType": "service",
+          "language": "Go",
+          "deployment": "Docker",
+          "responsibilities": [
+            "Expose Todo CRUD REST endpoints with bearer-token auth and per-user ownership",
+            "Implement POST /todos/bulk-delete with atomic, idempotent, classified deletion (deleted/notFound/forbidden)",
+            "Validate input (1-100 UUIDs, dedupe) and return structured error responses",
+            "Apply per-user token-bucket rate limiting on write endpoints and CORS handling",
+            "Provide /health endpoint and structured stdout logging of bulk operations"
+          ],
+          "architectureContext": "Stateless single-service backend serving HTTP clients directly on port 9090. No upstream/downstream services; uses in-memory thread-safe storage. All API requirements (existing + bulk-delete) are fulfilled here.",
+          "keyConsiderations": [
+            "Use a single sync.RWMutex around the map for the bulk-delete critical section to ensure atomic classify-then-delete with rollback on failure",
+            "Silently de-duplicate input IDs before classification; document in OpenAPI",
+            "Treat bearer token as userId stub; 401 when missing; consistent {code,message,details} error format across all 4xx/5xx",
+            "Token-bucket rate limiter keyed by userId (~60 req/min) on POST/DELETE/bulk-delete returning 429",
+            "Multi-stage Docker build to distroless/static, EXPOSE 9090; log requester + sorted IDs + outcome counts for each bulk delete"
+          ],
+          "apiContract": "openapi: 3.0.3\ninfo:\n  title: Todo API\n  version: 1.1.0\n  description: Todo management API with bulk delete support.\nservers:\n  - url: http://localhost:9090\npaths:\n  /health:\n    get:\n      summary: Health check\n      responses:\n        '200':\n          description: OK\n  /todos:\n    get:\n      summary: List todos for authenticated user\n      security: [{BearerAuth: []}]\n      responses:\n        '200':\n          description: OK\n          content:\n            application/json:\n              schema:\n                type: array\n                items: {$ref: '#/components/schemas/Todo'}\n    post:\n      summary: Create a todo\n      security: [{BearerAuth: []}]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: {$ref: '#/components/schemas/TodoInput'}\n      responses:\n        '201':\n          description: Created\n          content:\n            application/json:\n              schema: {$ref: '#/components/schemas/Todo'}\n  /todos/{id}:\n    get:\n      summary: Get a todo\n      security: [{BearerAuth: []}]\n      parameters:\n        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}\n      responses:\n        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Todo'}}}}\n        '404': {description: Not found}\n    delete:\n      summary: Delete a todo\n      security: [{BearerAuth: []}]\n      parameters:\n        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}\n      responses:\n        '204': {description: Deleted}\n        '403': {description: Forbidden}\n        '404': {description: Not found}\n  /todos/bulk-delete:\n    post:\n      summary: Bulk delete todos\n      description: Deletes up to 100 todos in one request. De-duplicates IDs silently. Returns per-item result.\n      security: [{BearerAuth: []}]\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema: {$ref: '#/components/schemas/BulkDeleteRequest'}\n      responses:\n        '200':\n          description: At least one deletion succeeded or all were no-ops on valid input\n          content:\n            application/json:\n              schema: {$ref: '#/components/schemas/BulkDeleteResponse'}\n        '400': {description: Invalid request, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}\n        '401': {description: Unauthenticated}\n        '429': {description: Rate limited}\ncomponents:\n  securitySchemes:\n    BearerAuth: {type: http, scheme: bearer}\n  schemas:\n    Todo:\n      type: object\n      properties:\n        id: {type: string, format: uuid}\n        ownerId: {type: string}\n        title: {type: string}\n        completed: {type: boolean}\n        createdAt: {type: string, format: date-time}\n    TodoInput:\n      type: object\n      required: [title]\n      properties:\n        title: {type: string}\n        completed: {type: boolean}\n    BulkDeleteRequest:\n      type: object\n      required: [ids]\n      properties:\n        ids:\n          type: array\n          minItems: 1\n          maxItems: 100\n          items: {type: string, format: uuid}\n    BulkDeleteResponse:\n      type: object\n      properties:\n        deletedCount: {type: integer}\n        deleted: {type: array, items: {type: string, format: uuid}}\n        notFound: {type: array, items: {type: string, format: uuid}}\n        forbidden: {type: array, items: {type: string, format: uuid}}\n    Error:\n      type: object\n      properties:\n        code: {type: string}\n        message: {type: string}\n        details: {type: object, additionalProperties: true}\n",
+          "dependencies": []
+        }
+      ]
+    }
+  ]
+}
