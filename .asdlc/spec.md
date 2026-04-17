@@ -1,71 +1,53 @@
 # Overview
 
-This project is a RESTful API service for managing a personal todo list. It allows users to create, read, update, and delete todo items through a well-defined HTTP interface, with all data persisted reliably in a relational datastore. The system is intended to serve as a backend for web, mobile, or CLI clients that need structured task management.
+This project adds a bulk delete capability to an existing todo management system, enabling clients to delete multiple todo items in a single request by providing a list of todo IDs. The goal is to reduce the number of round-trips required when users need to clear or remove several todos at once, improving both client-side efficiency and user experience.
 
-The target users are application developers who will integrate the API into client applications, and end users (via those clients) who need a simple, dependable way to track tasks. The API emphasizes correctness, predictable behavior, clear error reporting, and durable storage.
-
-The high-level approach is to expose a small set of resource-oriented endpoints for todo items, enforce validation on all inputs, persist data durably, and support standard operational concerns such as health checks, logging, and configurability across environments.
+The target users are API consumers and front-end applications that already interact with the todo service and need to support multi-select deletion flows (e.g., checkbox-based list management). The approach is to introduce a single new endpoint that accepts a collection of identifiers, validates them, performs the deletions atomically where possible, and returns a clear per-item result summary.
 
 # Capabilities
 
-## Todo Item Management
-- Users can create a new todo item with a title (required) and optional description, due date, and priority.
-- Users can retrieve a single todo item by its unique identifier.
-- Users can list all todo items, with support for pagination (limit and offset or cursor).
-- Users can filter the list by completion status, priority, and due-date range.
-- Users can sort the list by creation date, due date, or priority, in ascending or descending order.
-- Users can update any mutable field of an existing todo item (title, description, due date, priority, completion status).
-- Users can mark a todo item as complete or incomplete.
-- Users can delete a todo item by its identifier.
-- Deletion returns a clear response when the item did not exist.
+## Bulk Delete Endpoint
 
-## Data Model and Validation
-- Each todo item has a unique identifier, title, optional description, completion status, optional due date, priority, creation timestamp, and last-updated timestamp.
-- Title must be non-empty and limited to a reasonable maximum length (e.g., 200 characters).
-- Description, if present, is limited to a reasonable maximum length (e.g., 2000 characters).
-- Priority is restricted to a defined set of values (e.g., low, medium, high).
-- Due date, if present, must be a valid ISO 8601 timestamp.
-- Timestamps are automatically set by the system and cannot be overwritten by clients.
-- Invalid input returns a structured validation error describing each offending field.
+- The system shall expose a dedicated endpoint for deleting multiple todos in a single request.
+- The endpoint shall accept a list of todo IDs as input.
+- The endpoint shall support deleting at least 100 todo IDs in a single request.
+- The endpoint shall reject requests exceeding the maximum allowed batch size with a clear error message.
+- The endpoint shall reject requests with an empty ID list and return a validation error.
+- The endpoint shall reject requests with duplicate IDs or silently de-duplicate them, documenting the chosen behavior.
+- The endpoint shall validate that each provided ID conforms to the expected identifier format.
 
-## API Behavior
-- All endpoints accept and return JSON.
-- The API uses standard HTTP status codes (200, 201, 204, 400, 404, 409, 500).
-- Error responses follow a consistent schema including an error code, message, and optional field-level details.
-- The API is versioned via a URL prefix (e.g., `/v1`).
-- Requests with malformed JSON return a 400 response with a clear message.
-- Unknown routes return a 404 response in the standard error format.
+## Deletion Behavior
 
-## Persistence
-- All todo items are stored durably in a relational database.
-- Data survives service restarts without loss.
-- Database schema is managed through versioned migrations that can be applied automatically or on demand.
-- Concurrent updates to the same item are handled safely without data corruption.
+- The system shall permanently remove todos whose IDs are provided and exist.
+- The system shall skip IDs that do not correspond to an existing todo without failing the entire request.
+- The system shall only allow a user to delete todos that they own or are authorized to delete.
+- The system shall not delete any todos that the requester is not authorized to delete, even if other IDs in the batch are authorized.
+- The system shall ensure that a partial failure (e.g., database issue on one item) does not leave the data in an inconsistent state.
 
-## Configuration and Environments
-- Database connection details and service port are configurable via environment variables.
-- The service supports distinct configurations for development, staging, and production.
-- Secrets are never hard-coded and are loaded from the environment.
+## Response and Reporting
 
-## Observability and Operations
-- The service exposes a health-check endpoint reporting overall service status.
-- The service exposes a readiness endpoint that verifies database connectivity.
-- All requests are logged with method, path, status code, and latency.
-- Errors are logged with enough context to diagnose the issue without exposing sensitive data.
+- The endpoint shall return a summary indicating how many todos were successfully deleted.
+- The endpoint shall return a list of IDs that were successfully deleted.
+- The endpoint shall return a list of IDs that were not found.
+- The endpoint shall return a list of IDs that failed due to authorization errors.
+- The endpoint shall return an appropriate success status code when at least one deletion succeeds and all inputs were valid.
+- The endpoint shall return an appropriate error status code when the request itself is invalid (malformed body, missing IDs, etc.).
 
-## Security and Reliability
-- Input is validated and sanitized to prevent injection attacks.
-- The API enforces a maximum request body size to prevent abuse.
-- The service returns consistent, non-sensitive error messages to clients while logging full details internally.
-- The service handles database outages gracefully, returning 503 responses rather than crashing.
-- Graceful shutdown ensures in-flight requests complete before the process exits.
+## Authentication and Authorization
 
-## Performance
-- List endpoints respond within 200 ms under nominal load for datasets up to 100,000 items.
-- The service supports at least 100 concurrent requests without degradation under typical hardware.
-- Database queries for lookups and list filters are backed by appropriate indexes.
+- The endpoint shall require the caller to be authenticated.
+- The endpoint shall enforce the same authorization rules used by the single-item delete endpoint.
+- The system shall log each bulk delete operation with the requester's identity and the list of affected IDs for audit purposes.
 
-## Documentation and Testing
-- The API is documented with a machine-readable specification (e.g., OpenAPI) describing every endpoint, request, and response.
-- Example requests and responses are provided for each endpoint.
-- Automated tests cover create, read, update, delete, validation, and error paths.
+## Performance and Reliability
+
+- The endpoint shall complete a bulk delete of 100 items within a reasonable response time under normal load.
+- The endpoint shall be idempotent: repeating the same request shall not cause errors for IDs already deleted.
+- The system shall protect against abuse by applying rate limits consistent with other write endpoints.
+- The endpoint shall handle concurrent bulk delete requests safely without data corruption.
+
+## Documentation and Compatibility
+
+- The new endpoint shall be documented in the existing API documentation, including request schema, response schema, and example payloads.
+- The addition of this endpoint shall not alter the behavior of any existing todo endpoints.
+- Error responses shall follow the same error format conventions already used by the service.
